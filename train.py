@@ -260,7 +260,7 @@ class NeROICSystem(pl.LightningModule):
             self.train_dataset.generate_rays()
         else: # Load pre-processed rays 
             self.train_dataset.load_rays_from_file(self.args.rays_path)
-        self.renderer.init_cam_pose(self.train_dataset.get_all_poses())
+        self.renderer.init_cam_pose(self.train_dataset.get_all_poses(), self.train_dataset.cx, self.train_dataset.cy)
         self.train_dataset.print_info()
 
     def train_dataloader(self):
@@ -327,7 +327,7 @@ def train():
                         progress_bar_refresh_rate=1 if args.verbose else 100,
                         gpus=args.num_gpus,
                         accelerator='ddp' if args.num_gpus>1 else None,
-                        num_sanity_val_steps=1 if args.verbose else 1,
+                        num_sanity_val_steps=1 if args.verbose else 0,
                         gradient_clip_val=1,
                         benchmark=True,
                         val_check_interval = 1.0 if args.i_testset<=0 else args.i_testset,

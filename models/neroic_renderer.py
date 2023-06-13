@@ -336,6 +336,7 @@ class NeROICRenderer(BaseRenderer):
         if not geom_only:
             if not rendering_mode: # implicit appearance
                 static_rgbs = raw[..., :3] # N_rays, N_samples_, 3
+                hdr_rgbs = raw[..., :3]
             else: 
                 N_rays, N_samples = z_vals.shape
                 static_albedo = raw[..., :3].reshape(-1, 3) # N_rays*N_samples_, 3
@@ -370,6 +371,7 @@ class NeROICRenderer(BaseRenderer):
                     specular_rgb = (static_specular * specular_rgb).reshape(static_albedo.shape)
                     static_rgbs = static_rgbs + specular_rgb
  
+                hdr_rgbs = static_rgbs.reshape(N_rays, N_samples, -1).clone()
                 specular_rgb = specular_rgb.clamp(0, 1).reshape(N_rays, N_samples, -1) 
                 static_rgbs = static_rgbs.clamp(0, 1).reshape(N_rays, N_samples, -1) 
                 # Tone-Mapping
@@ -384,11 +386,14 @@ class NeROICRenderer(BaseRenderer):
                 if self.args.transient_lerp_mode: # Lerp-Based Blending
                     static_rgb_map = (static_weights[:,:,None] * (1-transient_weights[...,None]) * static_rgbs).sum(dim=1) # N_rays, 3
                     transient_rgb_map = (static_weights[:,:,None] * transient_weights[...,None] * transient_rgbs).sum(dim=1) # N_rays, 3
+                    hdr_rgb_map = (static_weights[:,:,None] * (1-transient_weights[...,None]) * hdr_rgbs).sum(dim=1) # N_rays, 3
                 else: # Nerf-W's Original Blending
                     static_rgb_map = (static_weights[:,:,None]*static_rgbs).sum(dim=1) # N_rays, 3
+                    hdr_rgb_map = (static_weights[:,:,None]*hdr_rgbs).sum(dim=1) # N_rays, 3
 
                 if self.args.white_bkgd:
                     static_rgb_map += (1-weights_sum[:, None])*bkgd
+                    hdr_rgb_map += (1-weights_sum[:, None])*bkgd
 
                 results['rgb_map'] = static_rgb_map + transient_rgb_map
 
@@ -401,16 +406,22 @@ class NeROICRenderer(BaseRenderer):
                 # The result is different from when both fields exist, since the transimttance
                 # will change.
                 static_only_rgb_map = (static_only_weights[:,:,None]*static_rgbs).sum(dim=1) # N_rays, 3
+                hdr_only_rgb_map = (static_only_weights[:,:,None]*hdr_rgbs).sum(dim=1) # N_rays, 3
                 if self.args.white_bkgd:
                     static_only_rgb_map += (1-static_only_weights_sum)*bkgd
+                    hdr_only_rgb_map += (1-static_only_weights_sum)*bkgd
                 results['static_rgb_map'] = static_only_rgb_map
+                results['hdr_rgb_map'] = hdr_only_rgb_map
             else: # no transient field
                 rgb_map = (weights[:,:,None]*static_rgbs).sum(dim=1) # N_rays, 3
+                hdr_rgb_map = (weights[:,:,None]*hdr_rgbs).sum(dim=1) # N_rays, 3
                 #print(rgb_map.min())
                 if self.args.white_bkgd:
                     rgb_map += (1-weights_sum[:, None])*bkgd
+                    hdr_rgb_map += (1-weights_sum[:, None])*bkgd
                 results['rgb_map'] = rgb_map                    
                 results['static_rgb_map'] = rgb_map
+                results['hdr_rgb_map'] = hdr_rgb_map
             
             # save intermediate results for debugging.
             if model_type == "rendering":

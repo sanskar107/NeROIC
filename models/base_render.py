@@ -80,10 +80,12 @@ class BaseRenderer(nn.Module):
     def calculate_loss(self):
         pass
 
-    def init_cam_pose(self, poses):
+    def init_cam_pose(self, poses, cx, cy):
+        self.cx = cx
+        self.cy = cy
         self.cam_R = poses[:, :3, :3].type_as(self.cam_dR) # rotation, n x 3 x 3
         self.cam_t = poses[:, :3, 3].type_as(self.cam_dt) # translation, n x 3
-        self.cam_K = torch.from_numpy(utils.batched_hwf2mat(poses[:, :3, 4].cpu().numpy())).type_as(self.cam_df) # intrinsic parameters, n x 3
+        self.cam_K = torch.from_numpy(utils.batched_hwf2mat(poses[:, :3, 4].cpu().numpy(), cx, cy)).type_as(self.cam_df) # intrinsic parameters, n x 3
 
         self.cam_R = nn.Parameter(self.cam_R, requires_grad=False)
         self.cam_t = nn.Parameter(self.cam_t, requires_grad=False)
@@ -170,7 +172,7 @@ class BaseRenderer(nn.Module):
 
         if testing:
             assert(test_pose is not None) # test poses must be given
-            rays_o, rays_d = utils.get_rays(test_pose.cpu()).to(test_pose.device)
+            rays_o, rays_d = utils.get_rays(test_pose.cpu(), self.cx, self.cy).to(test_pose.device)
             img_id = torch.zeros_like(rays_o[...,0:1])+img_id
         else:
             rays_o, rays_d = self.pix2rays(pixel_coords, img_id)
@@ -218,7 +220,7 @@ class BaseRenderer(nn.Module):
             ret_keys = ['acc_map', 'depth_mean', 'depth_var', 'normal_mean', 'pts_map']
         elif testing == True: # Only keep buffers that need to be printed out (to reduce memory consumption)
             ret_keys = ['rgb_map', 'acc_map', 'depth_map', 'static_rgb_map', 'normal_map_weighted', 'albedo_map', 'spec_map', 
-                        'glossiness_map', 'rgb_map_coarse', 'transient_acc_map', 'static_only_acc_map', 'is_edge']
+                        'glossiness_map', 'rgb_map_coarse', 'transient_acc_map', 'static_only_acc_map', 'is_edge', 'hdr_rgb_map']
         else: # Return all possible buffers
             ret_keys = None
 

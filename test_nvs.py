@@ -62,24 +62,7 @@ class NeRFSystem(pl.LightningModule):
         self.render_kwargs_test['N_samples'] = self.render_kwargs_test['N_samples']*4
         self.render_kwargs_test['raw_noise_std'] = 0.
 
-        # light_img = imageio.imread(self.args.test_env_filename)
-        light_imgs = np.load(self.args.test_env_filename)
         self.light_param = []
-        for i in range(light_imgs.shape[0]):
-            light_img = cv2.GaussianBlur(light_imgs[i], (5,5),cv2.BORDER_DEFAULT)
-            # imageio.imwrite("test.png", light_img.clip(0, 1))
-
-            # discard light sources that are too strong
-            light_img_clip = torch.from_numpy(light_img).clip(0, self.args.test_env_maxthres)[...,:3]
-
-            # gamma correction
-            avgL_clip = exposure_helper.compute_avg_luminance(light_img_clip)
-            print(f"Average luminance for idx = {i} : {avgL_clip}")
-            exposure_helper.apply_ev100(light_img_clip, exposure_helper.compute_ev100_from_avg_luminance(avgL_clip), clip=False)
-            
-            light_img_clip = sh.project_environment(3, light_img_clip)
-            # imageio.imwrite("test_sh.png", sh.unproject_environment(3, light_img_clip, 500, 1000).clip(0, 1))
-            self.light_param.append(light_img_clip)
 
 
     def forward(self, pixel_coords, pose, img_id): # Rendering 
@@ -94,15 +77,11 @@ class NeRFSystem(pl.LightningModule):
         bkgd = torch.from_numpy(np.array([1,1,1])).type_as(gt_imgs)   
         gt_imgs = gt_imgs*gt_masks[...,None] + bkgd*(~gt_masks[...,None])
         
-        print(f"Using light idx : {batch_idx}")
-        light_param = self.light_param[batch_idx].type_as(gt_imgs)
-        light_param = [light_param, light_param[0,0:1]*0+2.4]
-
         hwf = batch['poses'][0][:3,-1]
         pose = self.renderer.get_pose(img_id, hwf)
         
         ret_dict = self.renderer.batch_render_test(pose, self.args.chunk//4, self.render_kwargs_test,
-                                                    img_id=img_id, light_param=light_param)
+                                                    img_id=img_id, light_param=None)
 
         rgbs = torch.from_numpy(ret_dict['static_rgb_map'][0]).type_as(gt_imgs)
         rgbs_masked = rgbs*gt_masks[...,None] + bkgd*(~gt_masks[...,None])
@@ -156,7 +135,7 @@ def train():
     args.debug_green_bkgd = False
 
     logger = pl_loggers.TensorBoardLogger(
-        save_dir="results_synth/relighting",
+        save_dir="results_bmvs/nvs",
         name=args.expname
     )
 

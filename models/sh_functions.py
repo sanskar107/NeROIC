@@ -197,7 +197,7 @@ def _eval_legendre(l, m, x):
 
     return pmm1
 
-def _eval_sh(l, m, angle=None, xyz=None):
+def _eval_sh(l, m, angle=None, xyz=None, flag_z=False):
     def _xyz2angle_z(xyz: torch.FloatTensor):
         # Z up
         return torch.stack([torch.atan2(xyz[:, 1], xyz[:, 0]), torch.acos(torch.clamp(xyz[:, 2], -1.0, 1.0))], dim=-1).type_as(xyz)
@@ -213,7 +213,8 @@ def _eval_sh(l, m, angle=None, xyz=None):
     if angle is None:
         angle = _xyz2angle_z(xyz) 
     else:
-        angle = _angle_y2z(angle)
+        if not flag_z:
+            angle = _angle_y2z(angle)
 
     phi = angle[:, 0]
     theta = angle[:, 1]
@@ -252,12 +253,13 @@ def project_environment(order, env_img):
     y, x = torch.meshgrid(torch.arange(0, h), torch.arange(0, w))
     coord = torch.stack([x, y], dim=-1).reshape(-1, 2).type_as(env_img)
     angle = imcoord2angle(coord, w, h)
+    angle[:, 0] = math.pi - angle[:, 0]
     weight = pixel_area * torch.sin(angle[:, 1])
     color = env_img.reshape(-1, 3)
     for l in range(order+1):
         for m in range(-l, l+1):
             ind = get_index(l, m)
-            sh = _eval_sh(l, m, angle)
+            sh = _eval_sh(l, m, angle, flag_z=True)
             coeffs[ind] = ((sh * weight)[:,None] * color).sum(dim=0)
     return coeffs
 

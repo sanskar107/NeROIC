@@ -46,31 +46,38 @@ def get_learning_rate(optimizer):
     for param_group in optimizer.param_groups:
         return param_group['lr']
 
-def hwf2mat(hwf):
+def hwf2mat(hwf, cx, cy):
     H, W, focal = hwf
     H, W = int(H), int(W)
+    # return np.array([
+    #         [focal, 0, 0.5*W],
+    #         [0, focal, 0.5*H],
+    #         [0, 0, 1]])
+
     return np.array([
-            [focal, 0, 0.5*W],
-            [0, focal, 0.5*H],
+            [focal, 0, cx],
+            [0, focal, cy],
             [0, 0, 1]])
 
-def batched_hwf2mat(hwf):
+def batched_hwf2mat(hwf, cx, cy):
     H = hwf[:, 0].astype(np.int32)
     W = hwf[:, 1].astype(np.int32)
     focal = hwf[:, 2]
     K = np.zeros([hwf.shape[0], 3, 3], dtype=np.float32)
     K[:, 0, 0] = focal 
     K[:, 1, 1] = focal
-    K[:, 0, 2] = W*0.5
-    K[:, 1, 2] = H*0.5
+    # K[:, 0, 2] = W*0.5
+    # K[:, 1, 2] = H*0.5
+    K[:, 0, 2] = cx
+    K[:, 1, 2] = cy
     return K
 
-def get_rays(pose, mask=None):
+def get_rays(pose, cx, cy, mask=None):
     if isinstance(pose, np.ndarray):
         pose = torch.FloatTensor(pose)
     H = int(pose[0, 4])
     W = int(pose[1, 4])
-    K = hwf2mat(pose[:3, 4])
+    K = hwf2mat(pose[:3, 4], cx, cy)
     c2w = pose[:3, :4]
     i, j = torch.meshgrid(torch.linspace(0, W-1, W), torch.linspace(0, H-1, H))  # pytorch's meshgrid has indexing='ij'
     if mask is None:

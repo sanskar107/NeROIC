@@ -1,0 +1,54 @@
+# Common settings
+expname: None
+model: NeROIC
+basedir: ./out_rendering_bmvs_new
+model_type: "rendering"
+rays_path: None
+ft_path: None
+load_prior: True
+
+# Dataset settings
+dataset_type: llff
+factor: 2
+width: 0
+test_intv: 8
+test_offset: 1
+have_mask: True
+mask_ratio: 2
+use_bbox: True
+
+# Training settings
+num_epochs: 10
+lrate: 0.0004
+scheduler: "cosine"
+decay_epoch: 10
+#decay_gamma: 0.1
+
+# Testing settings
+i_video: 2000000
+i_traintest: 2000000
+i_testepoch: 10
+# i_testset: 10000
+
+# Rendering settings 
+N_rand: 1024
+N_samples: 64
+N_importance: 64
+use_viewdirs: True
+raw_noise_std: 0
+white_bkgd: True
+debug_green_bkgd: True
+
+# Network settings
+encode_appearance: True
+encode_transient: True
+beta_min: 0.1
+
+use_specular: True
+transient_lerp_mode: True
+use_expected_depth: True
+lambda_n: 5
+lambda_tr: 1
+lambda_spec: 0.1
+lambda_smooth_n: 0.5
+

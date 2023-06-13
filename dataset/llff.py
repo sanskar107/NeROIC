@@ -45,7 +45,7 @@ def _minify(basedir, factors=[], resolutions=[], have_mask=False):
     imgdir_orig = imgdir        
 
     if have_mask:
-        maskdir = os.path.join(basedir, 'images_mask')
+        maskdir = os.path.join(basedir, 'masks')
         masks = [os.path.join(maskdir, f) for f in sorted(os.listdir(maskdir))]
         masks = [f for f in masks if is_image(f)]
         maskdir_orig = maskdir
@@ -55,11 +55,11 @@ def _minify(basedir, factors=[], resolutions=[], have_mask=False):
     for r in factors + resolutions:
         if isinstance(r, int) or isinstance(r, float): # factor
             name = 'images_{}'.format(r)
-            mask_name = 'images_mask_{}'.format(r)
+            mask_name = 'masks_{}'.format(r)
             resizearg = '{}%'.format(100./r)
         else: # resolution
             name = 'images_{}x{}'.format(r[1], r[0])
-            mask_name = 'images_mask_{}x{}'.format(r[1], r[0])
+            mask_name = 'masks_{}x{}'.format(r[1], r[0])
             resizearg = '{}x{}'.format(r[1], r[0])
         imgdir = os.path.join(basedir, name)
         maskdir = os.path.join(basedir, mask_name)
@@ -189,34 +189,32 @@ class LLFFDataset(NeRFDataset):
         '''Load images/poses/masks/pointcloud from files'''
         print("Loading LLFF data from %s"%self.datadir)
         poses_arr = np.load(os.path.join(self.datadir, 'poses_bounds.npy'))
-        if os.path.exists(os.path.join(self.datadir, 'pts.pkl')):
-            pts_arr = pickle.load(open(os.path.join(self.datadir, 'pts.pkl'), "rb"))
-        else:
-            pts_arr = None
+        val_poses_arr = np.load(os.path.join(self.datadir, 'val_poses_bounds.npy'))
+        N_train = poses_arr.shape[0]
+        N_val = val_poses_arr.shape[0]
+        poses_arr = np.concatenate([poses_arr, val_poses_arr], axis=0)
+
+        # custom bounding box
+        assert os.path.exists(os.path.join(self.datadir, 'object_bounding_box.txt'))
+        bbox = np.loadtxt(os.path.join(self.datadir, 'object_bounding_box.txt'))
+
+        # if os.path.exists(os.path.join(self.datadir, 'pts.pkl')):
+        #     pts_arr = pickle.load(open(os.path.join(self.datadir, 'pts.pkl'), "rb"))
+        # else:
+        #     pts_arr = None
 
         poses = poses_arr[:, :-2].reshape([-1, 3, 5]).transpose([1,2,0])
         bds = poses_arr[:, -2:].transpose([1,0])
         
         is_res_same = poses[0, 4, :].max() == poses[0, 4, :].min() and \
             poses[1, 4, :].max() == poses[1, 4, :].min()
+        is_res_same = True
+        print(f"Is_res_same : {is_res_same}, factor : {self.factor}")
         sfx = ''
         
         if self.factor is not None and self.factor != 1:
             sfx = '_{}'.format(self.factor)
             _minify(self.datadir, factors=[self.factor], have_mask=self.have_mask)
-            resized = True
-        elif self.width is not None:
-            if is_res_same:
-                sh = poses[:2,4,0].astype(np.uint32)
-                self.factor = sh[1] / float(self.width)
-                self.height = sh[0] * self.width // sh[1]
-                _minify(self.datadir, resolutions=[[self.height, self.width]], have_mask=self.have_mask)
-                sfx = '_{}x{}'.format(self.width, self.height)
-            else:
-                sh = poses[:2,4,:].max(axis=-1).astype(np.int32)
-                self.factor = sh[1] / float(self.width)
-                _minify(self.datadir, factors=[self.factor], have_mask=self.have_mask)
-                sfx = '_{}'.format(self.factor)
             resized = True
         else:
             self.factor = 1
@@ -241,6 +239,7 @@ class LLFFDataset(NeRFDataset):
 
         assert(poses.shape[-1] == len(imgfiles)) # Image/Pose number does not match!
         
+        cx, cy = poses[0, 4, 0], poses[1, 4, 0]
         if resized:
             if is_res_same:
                 sh = imageio.imread(imgfiles[0]).shape
@@ -248,6 +247,11 @@ class LLFFDataset(NeRFDataset):
             else:
                 poses[:2, 4, :] = np.floor(poses[:2, 4, :] * 1./self.factor + 1e-5)
             poses[2, 4, :] = poses[2, 4, :] * 1./self.factor
+            cx *= 1./self.factor
+            cy *= 1./self.factor
+            # poses[:3, 4, :] = poses[:3, 4, :] * 1./self.factor
+        sh = imageio.imread(imgfiles[0]).shape
+        poses[:2, 4, :] = np.array(sh[:2]).reshape([2, 1])
 
         def imread(f):
             if f.endswith('png'):
@@ -256,7 +260,9 @@ class LLFFDataset(NeRFDataset):
                 return imageio.imread(f)
 
         def imgf2maskf(img_file):
-            mask_dir = os.path.dirname(img_file).replace("images", "images_mask")
+            return img_file.replace("images", "masks")
+            breakpoint()
+            mask_dir = os.path.dirname(img_file).replace("images", "masks")
             img_id = os.path.basename(img_file).split(".")[0]
             if os.path.exists(os.path.join(mask_dir, "%s-removebg-preview.png"%img_id)):
                 return os.path.join(mask_dir, "%s-removebg-preview.png"%img_id)
@@ -276,20 +282,22 @@ class LLFFDataset(NeRFDataset):
         padding_sh = poses[:2,4,:].max(axis=-1).astype(np.int32)
         # print(imgfiles)
         imgs = [imread(f)[...,:3]/255. for f in imgfiles]
-        for i in range(len(imgs)):
-            assert(np.abs(imgs[i].shape[:2]-poses[0:2, 4, i]).max() <= 1.5) # Image sizes and pose parameters don't match!
-        print("Image size check finished.")
+        # for i in range(len(imgs)):
+        #     assert(np.abs(imgs[i].shape[:2]-poses[0:2, 4, i]).max() <= 1.5) # Image sizes and pose parameters don't match!
+        # print("Image size check finished.")
 
         # pad image with -1 to distinguish with valid pixels
         if self.have_mask:
-            imgs_masks = [padding(maskread(imgf2maskf(f), imgs[i]), padding_sh) for i, f in enumerate(imgfiles)]
+            imgs_masks = [padding(maskread(imgf2maskf(f), imgs[i]), imgs[i].shape[:2]) for i, f in enumerate(imgfiles)]
             imgs_masks = np.stack(imgs_masks, -1)
         else:
             imgs_masks = None
+        print(f"Padding sh : {padding_sh}")
+        print(f"img shape : {imgs[0].shape}")
         imgs = np.stack([padding(x, padding_sh, pad_value=-1) for x in imgs], -1)  
         
         print('Loaded image data', imgs.shape, poses[:,-1,0])
-        return poses, pts_arr, bds, imgs, imgs_masks, imgfiles
+        return poses, bbox, bds, imgs, imgs_masks, imgfiles, N_train, N_val, cx, cy
 
     def __init__(self, args, recenter=True, bd_factor=.75, path_zflat=False):    
         NeRFDataset.__init__(self, args)
@@ -301,8 +309,11 @@ class LLFFDataset(NeRFDataset):
 
         self.width = None if args.width == 0 else args.width
 
-        poses, pts, bds, imgs, imgs_masks, imgfiles = self._load_data() 
+        poses, bbox, bds, imgs, imgs_masks, imgfiles, N_train, N_val, cx, cy = self._load_data() 
         print('Loaded', self.datadir, bds.min(), bds.max())
+        self.cx = cx
+        self.cy = cy
+        print(f"cx : {cx}, cy : {cy}")
         
         # structure of poses_bound:
         # 3x5 matrix
@@ -317,31 +328,68 @@ class LLFFDataset(NeRFDataset):
             imgs_masks = np.moveaxis(imgs_masks, -1, 0)
         bds = np.moveaxis(bds, -1, 0).astype(np.float32)
         
-        poses, pts, avg_pose = recenter_poses(poses, pts)
+        print("not recentering poses")
+        # poses, pts, avg_pose = recenter_poses(poses, pts)
 
         sc = 1. if bd_factor is None else 1./(bds.min() * bd_factor)
+        print('Using Scaling factor 1.0 and not ', sc)
+        sc = 1.0
         poses[:,:3,3] *= sc
         bds *= sc   
 
         if self.args.use_bbox:
-            assert(pts is not None) # Point cloud is required to generate bounding box!
-            pts *= sc
-            pts_mean = pts.mean(axis=0)
-            pts_norm = np.linalg.norm(pts-pts_mean, axis=-1)
-            pts_norm_sorted = np.sort(pts_norm)
-            pts_norm_thres = pts_norm_sorted[-max(5, len(pts_norm_sorted)//500)] # filter out outliers
-            pts_reduced = pts[pts_norm <= pts_norm_thres]
-
-            bound_box = np.stack([pts_reduced.min(axis=0), pts_reduced.max(axis=0)], axis=-1) # 3, 2
-            bound_box_center = (bound_box[:,0]+bound_box[:,1])[:,None] / 2
-            bound_box = bound_box_center + (bound_box-bound_box_center) * 1.3
-
+            assert bbox is not None
+            # # default => objrel, and synthetic
+            bound_box = bbox.reshape(3, 2) * 1.3
             look_at = (bound_box[:,0]+bound_box[:,1]) / 2
             radius = np.linalg.norm((poses[:, :3, 3]-look_at[None,:]), axis=-1).mean() * 1.1
+
+            # # bmvs
+            # bound_box = bbox.reshape(3, 2) * 1.0
+            # look_at = (bound_box[:,0]+bound_box[:,1]) / 2
+            # radius = np.linalg.norm((poses[:, :3, 3]-look_at[None,:]), axis=-1).mean() * 1.1
+
+            # poses[:, :3, 3] -= look_at[None,:]
+            # poses[:, :3, 3] /= radius
+            # bound_box -= look_at[..., None]
+            # bds /= radius
+            # bound_box /= radius
+            # look_at = np.zeros(3)
+            # radius = 1.0
+
+            # # dtu
+            # bound_box = bbox.reshape(3, 2) * 1.0 ## 1.3 for synthetic
+            # look_at = (bound_box[:,0]+bound_box[:,1]) / 2
+            # radius = np.linalg.norm((poses[:, :3, 3]-look_at[None,:]), axis=-1).mean() * 1.1
+
+            # poses[:, :3, 3] -= look_at[None,:]
+            # poses[:, :3, 3] /= radius
+            # bound_box -= look_at[..., None]
+            # bds /= radius
+            # bound_box /= radius
+            # look_at = np.zeros(3)
+            # radius = 1.0
+
+            # assert(pts is not None) # Point cloud is required to generate bounding box!
+            # pts *= sc
+            # pts_mean = pts.mean(axis=0)
+            # pts_norm = np.linalg.norm(pts-pts_mean, axis=-1)
+            # pts_norm_sorted = np.sort(pts_norm)
+            # pts_norm_thres = pts_norm_sorted[-max(5, len(pts_norm_sorted)//500)] # filter out outliers
+            # pts_reduced = pts[pts_norm <= pts_norm_thres]
+
+            # bound_box = np.stack([pts_reduced.min(axis=0), pts_reduced.max(axis=0)], axis=-1) # 3, 2
+            # bound_box_center = (bound_box[:,0]+bound_box[:,1])[:,None] / 2
+            # bound_box = bound_box_center + (bound_box-bound_box_center) * 1.3
+
+            # look_at = (bound_box[:,0]+bound_box[:,1]) / 2
+            # radius = np.linalg.norm((poses[:, :3, 3]-look_at[None,:]), axis=-1).mean() * 1.1
         else:
+            assert False
             bound_box = None
             look_at = None
             radius = np.linalg.norm(poses[:, :3, 3], axis=-1).mean() * 1.1
+        # breakpoint()
 
         mean_phi = np.arcsin(-poses[:,1,2]).mean()
         test_poses = create_spheric_poses(radius, look_at, mean_phi = mean_phi, 
@@ -358,36 +406,43 @@ class LLFFDataset(NeRFDataset):
         if imgs_masks is not None:
             imgs_masks = torch.from_numpy(imgs_masks)
 
-        if self.args.verbose:
-            print('Data:')
-            print(poses.shape, images.shape, bds.shape)
+        # if self.args.verbose:
+        print('Data:')
+        print(poses.shape, images.shape, bds.shape)
 
-        i_test = np.arange(poses.shape[0])[args.test_offset::args.test_intv] 
-        if self.args.verbose:
-            print('HOLDOUT view is', i_test)
-            print('HOLDOUT image_names is', [imgfiles[i] for i in i_test])
+        # i_test = np.arange(poses.shape[0])[args.test_offset::args.test_intv] 
+        # if self.args.verbose:
+        #     print('HOLDOUT view is', i_test)
+        #     print('HOLDOUT image_names is', [imgfiles[i] for i in i_test])
 
         hwf = poses[0,:3,-1] # intrinsic
 
         print('Loaded llff', images.shape, test_poses.shape, hwf, args.datadir)
-        if isinstance(i_test, int):
-            i_test = [i_test]
+        # if isinstance(i_test, int):
+        #     i_test = [i_test]
 
-        i_val = i_test
-        i_train = [i for i in range(len(images)) if (i not in i_test and i not in i_val)]
-        if self.args.train_limit>0:
-            g = np.random.RandomState(2022)
-            train_idx = np.arange(len(i_train))
-            train_idx = g.permutation(train_idx)
-            i_train = [i_train[i] for i in train_idx[:self.args.train_limit]]
-            if self.args.verbose:
-                print("Training image limiting. Selected image indices are:", i_train)
+        # i_val = i_test
+        # i_train = [i for i in range(len(images)) if (i not in i_test and i not in i_val)]
+        i_train = np.arange(poses.shape[0])[:N_train]
+        i_val = np.arange(poses.shape[0])[N_train:N_train+4]
+        i_test = np.arange(poses.shape[0])[N_train:]
+
+        # if self.args.train_limit>0:
+        #     g = np.random.RandomState(2022)
+        #     train_idx = np.arange(len(i_train))
+        #     train_idx = g.permutation(train_idx)
+        #     i_train = [i_train[i] for i in train_idx[:self.args.train_limit]]
+        #     if self.args.verbose:
+        #         print("Training image limiting. Selected image indices are:", i_train)
 
         print('DEFINING BOUNDS')
         near = np.ndarray.min(bds) * .9
         far = np.ndarray.max(bds) * 1.2
-        if not self.args.use_bbox:
-            far = min(far, 8*near)
+        print('NEAR FAR', near, far)
+
+        # if not self.args.use_bbox:
+        #     far = min(far, 8*near)
+
         test_img_id_file = os.path.join(args.datadir, 'test_img_id.txt')
         if os.path.exists(test_img_id_file):
             test_img_id = np.array([int(x) for x in open(test_img_id_file).readline()[:-1].split(' ')])
@@ -411,7 +466,7 @@ class LLFFDataset(NeRFDataset):
         self.i_train = i_train
         self.bbox = bound_box
         self.test_img_id = test_img_id
-        self.pts = pts
+        # self.pts = pts
 
     def update_test_poses(self, train_poses):
         if self.args.use_bbox:

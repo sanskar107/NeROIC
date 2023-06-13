@@ -135,7 +135,7 @@ class NeRFSystem(pl.LightningModule):
         }
         self.render_kwargs_train.update(self.bds_dict)
         self.test_dataset.generate_rays()
-        self.renderer.init_cam_pose(self.test_dataset.get_all_poses())
+        self.renderer.init_cam_pose(self.test_dataset.get_all_poses(), self.test_dataset.cx, self.test_dataset.cy)
         self.test_dataset.print_info()
 
     def test_dataloader(self):
